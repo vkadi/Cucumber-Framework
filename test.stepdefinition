@@ -1,0 +1,120 @@
+package com.xyz.snp.di.nds;
+
+import com.xyz.snp.di.util.PropertyReader;
+import org.skyscreamer.jsonassert.JSONAssert;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import cucumber.api.java8.En;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.fluent.Request;
+import org.apache.http.entity.ContentType;
+import org.junit.Assert;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.UUID;
+import java.io.IOException;
+import java.io.StringWriter;
+import java.util.HashMap;
+import java.util.Map;
+
+public class TemplateInstanceGlue implements En {
+
+    HttpResponse httpResponse = null;
+    String serviceResponse = null;
+    JsonObject jsonObject = null;
+    String endpoint = "/nds/v1/fqdn/rur1.sebring.fl.westfl.testy.net/templates";
+    String serverUrl = new PropertyReader().readProperty("server.url");
+    private static final Logger LOGGER = LoggerFactory.getLogger(TemplateInstanceGlue.class);
+    private static HashMap<String, String> postList = new HashMap<String, String>();
+    private static HashMap<String, String> responseList = new HashMap<String, String>();
+
+    private static Map<Integer, UUID> uuidMap = new HashMap<Integer, UUID>();
+    static int count = 0;
+    UUID uuid = UUID.randomUUID();
+
+
+
+
+    public TemplateInstanceGlue(){
+
+        postList.put("correct", "TestData/NDS/templateInstance/postdata1.json");
+        postList.put("missing_partner", "TestData/NDS/templateInstance/postdata2.json");
+        postList.put("wrong_variables", "TestData/NDS/templateInstance/postdata3.json");
+        postList.put("templateVersion", "TestData/NDS/templateInstance/postdata4.json");
+
+        responseList.put("correct", "ResponseData/NDS/templateInstance/response1.json");
+        responseList.put("missing_partner", "ResponseData/NDS/templateInstance/response2.json");
+        responseList.put("wrong_variables", "ResponseData/NDS/templateInstance/response3.json");
+        responseList.put("templateVersion", "ResponseData/NDS/templateInstance/response4.json");
+
+
+        When("^I post template instance with (.*) to NDS endpoint$", (String payload) -> {
+            JsonParser parser = new JsonParser();
+            JsonObject jsonObject = parser.parse(getFile(postList.get(payload))).getAsJsonObject();
+
+           jsonObject.getAsJsonObject("templates").getAsJsonArray("template").get(0).getAsJsonObject().getAsJsonObject("instances").getAsJsonArray("instance").get(0).getAsJsonObject().addProperty("uuid", uuid.toString());
+           jsonObject.getAsJsonObject("templates").getAsJsonArray("template").get(0).getAsJsonObject().getAsJsonObject("instances").getAsJsonArray("instance").get(0).getAsJsonObject().addProperty("serviceId", uuid.toString());
+           uuidMap.put(count++,uuid);
+           httpResponse = Request.Post(serverUrl + endpoint).bodyString(jsonObject.toString(), ContentType.APPLICATION_JSON).addHeader("requestId", "5454")
+                    .addHeader("Content-type", "application/json").execute().returnResponse();
+        });
+
+
+        When("^I read (.*) from template instance using (.*) endpoint", (String arg1, String arg2) -> {
+            httpResponse = Request.Get(serverUrl + arg2)
+                    .addHeader("requestId","1").execute().returnResponse();
+            StringWriter stringWriter = new StringWriter();
+            IOUtils.copy(httpResponse.getEntity().getContent(), stringWriter);
+            serviceResponse = stringWriter.toString();
+            LOGGER.info(serviceResponse);
+        });
+
+        And ("^I should get templateuuid for (.*)$", (String arg1) -> {
+            Assert.assertEquals(200, httpResponse.getStatusLine().getStatusCode());
+
+        });
+
+        When("^I delete template instance using /nds/v2/serviceIds/uuid", () -> {
+            uuid = uuidMap.get(0);
+            System.out.println("uuid" +uuid.toString());
+            httpResponse = Request.Delete(serverUrl + "/nds/v2/serviceIds/" +uuid )
+                    .addHeader("requestId", "1").execute().returnResponse();
+        });
+
+        Then("^I should get 204 response$", () -> {
+            Assert.assertEquals(204, httpResponse.getStatusLine().getStatusCode());
+        });
+
+        Then("^I should get a (.*) response and expected response as (.*)$", (Integer arg1, String arg2) -> {
+            StringWriter stringWriter = new StringWriter();
+            IOUtils.copy(httpResponse.getEntity().getContent(), stringWriter);
+            serviceResponse = stringWriter.toString();
+            LOGGER.info(serviceResponse);
+
+            JsonParser parser = new JsonParser();
+            jsonObject = parser.parse(serviceResponse).getAsJsonObject();
+            JsonObject jsonObject2 = parser.parse(getFile(responseList.get(arg2))).getAsJsonObject();
+            Assert.assertEquals(jsonObject2, jsonObject);
+
+            if (arg1.equals("200")) {
+                System.out.println("snp-configured as true ");
+                JSONAssert.assertEquals(getFile("ResponseData/NDS/templateInstance/response5.json"), serviceResponse, false);
+            }
+        });
+
+    }
+    private String getFile(String fileName) {
+
+        StringBuilder result = new StringBuilder();
+
+        ClassLoader classLoader = getClass().getClassLoader();
+        try {
+            result.append(IOUtils.toString(classLoader.getResourceAsStream(fileName)));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+        return result.toString();
+    }
+}
